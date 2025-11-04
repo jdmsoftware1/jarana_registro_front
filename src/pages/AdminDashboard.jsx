@@ -67,7 +67,7 @@ const AdminDashboard = () => {
     { id: 'employees', label: 'Empleados', icon: Users },
     { id: 'records', label: 'Registros', icon: Clock },
     { id: 'records-summary', label: 'Resumen Fichajes', icon: FileText },
-    { id: 'schedules', label: 'Horarios', icon: Calendar },
+    { id: 'weekly-schedules', label: 'Horarios Semanales', icon: Calendar },
     { id: 'vacations', label: 'Vacaciones', icon: Shield },
     { id: 'weekly', label: 'Vista Semanal', icon: FileText },
     { id: 'ai-insights', label: 'IA Insights', icon: BarChart3 },
@@ -166,7 +166,7 @@ const AdminDashboard = () => {
         {activeTab === 'employees' && <EmployeesContent />}
         {activeTab === 'records' && <RecordsContent />}
         {activeTab === 'records-summary' && <RecordsSummaryContent />}
-        {activeTab === 'schedules' && <SchedulesContent setActiveTab={setActiveTab} />}
+        {activeTab === 'weekly-schedules' && <WeeklySchedulesContent />}
         {activeTab === 'vacations' && <VacationsContent />}
         {activeTab === 'weekly' && <WeeklyViewContent />}
         {activeTab === 'ai-insights' && <AIInsightsContent />}
@@ -1157,6 +1157,8 @@ const VacationsContent = () => {
 const WeeklyViewContent = () => {
   const [employees, setEmployees] = useState([]);
   const [schedules, setSchedules] = useState({});
+  const [weeklySchedules, setWeeklySchedules] = useState({});
+  const [vacations, setVacations] = useState({});
   const [currentWeek, setCurrentWeek] = useState(new Date());
   const [loading, setLoading] = useState(true);
 
@@ -1180,6 +1182,16 @@ const WeeklyViewContent = () => {
 
   const weekDates = getWeekDates(currentWeek);
 
+  // Get week number
+  const getWeekNumber = (date) => {
+    const d = new Date(date);
+    d.setHours(0, 0, 0, 0);
+    d.setDate(d.getDate() + 4 - (d.getDay() || 7));
+    const yearStart = new Date(d.getFullYear(), 0, 1);
+    const weekNo = Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
+    return weekNo;
+  };
+
   // Fetch employees and their schedules
   const fetchData = async () => {
     try {
@@ -1189,10 +1201,17 @@ const WeeklyViewContent = () => {
         const employeesData = await employeesResponse.json();
         setEmployees(employeesData);
 
-        // Fetch schedules for each employee
+        const year = currentWeek.getFullYear();
+        const weekNumber = getWeekNumber(currentWeek);
+
+        // Fetch schedules, weekly schedules and vacations for each employee
         const schedulesData = {};
+        const weeklySchedulesData = {};
+        const vacationsData = {};
+        
         for (const employee of employeesData) {
           try {
+            // Fetch base schedules (fallback)
             const scheduleResponse = await fetch(`${getApiUrl()}/schedules/employee/${employee.id}`);
             if (scheduleResponse.ok) {
               const employeeSchedules = await scheduleResponse.json();
@@ -1201,11 +1220,35 @@ const WeeklyViewContent = () => {
                 return acc;
               }, {});
             }
+
+            // Fetch weekly schedules
+            const weeklyResponse = await fetch(`${getApiUrl()}/weekly-schedules/employee/${employee.id}`);
+            if (weeklyResponse.ok) {
+              const weeklyData = await weeklyResponse.json();
+              const weekSchedule = (weeklyData.data || []).find(ws => 
+                ws.year === year && ws.weekNumber === weekNumber
+              );
+              if (weekSchedule) {
+                weeklySchedulesData[employee.id] = weekSchedule;
+              }
+            }
+
+            // Fetch vacations
+            const vacationResponse = await fetch(`${getApiUrl()}/vacations/employee/${employee.id}`);
+            if (vacationResponse.ok) {
+              const vacationData = await vacationResponse.json();
+              vacationsData[employee.id] = vacationData.filter(v => v.status === 'approved');
+            }
+
+            await new Promise(resolve => setTimeout(resolve, 50));
           } catch (error) {
-            console.error(`Error fetching schedules for employee ${employee.id}:`, error);
+            console.error(`Error fetching data for employee ${employee.id}:`, error);
           }
         }
+        
         setSchedules(schedulesData);
+        setWeeklySchedules(weeklySchedulesData);
+        setVacations(vacationsData);
       }
     } catch (error) {
       console.error('Error fetching data:', error);
@@ -1215,10 +1258,47 @@ const WeeklyViewContent = () => {
   };
 
   React.useEffect(() => {
+    setLoading(true);
     fetchData();
-  }, []);
+  }, [currentWeek]);
 
-  const getScheduleForDay = (employeeId, dayOfWeek) => {
+  const getScheduleForDay = (employeeId, dayOfWeek, date) => {
+    // Check if employee has vacation on this date
+    const employeeVacations = vacations[employeeId] || [];
+    const hasVacation = employeeVacations.some(v => {
+      const vStart = new Date(v.startDate);
+      const vEnd = new Date(v.endDate);
+      const checkDate = new Date(date);
+      return checkDate >= vStart && checkDate <= vEnd;
+    });
+
+    if (hasVacation) {
+      return { isVacation: true };
+    }
+
+    // Check if employee has weekly schedule for this week
+    const weeklySchedule = weeklySchedules[employeeId];
+    if (weeklySchedule && weeklySchedule.template && weeklySchedule.template.templateDays) {
+      // Use template schedule
+      const templateDay = weeklySchedule.template.templateDays.find(td => td.dayOfWeek === dayOfWeek);
+      if (templateDay) {
+        return {
+          isWorkingDay: templateDay.isWorkingDay,
+          startTime: templateDay.startTime,
+          endTime: templateDay.endTime,
+          isWeeklySchedule: true,
+          templateName: weeklySchedule.template.name
+        };
+      }
+      // If template exists but day not found, return non-working day
+      return {
+        isWorkingDay: false,
+        isWeeklySchedule: true,
+        templateName: weeklySchedule.template.name
+      };
+    }
+
+    // Fallback to base schedule
     return schedules[employeeId]?.[dayOfWeek] || null;
   };
 
@@ -1308,18 +1388,24 @@ const WeeklyViewContent = () => {
                   </td>
                   {weekDates.map((date, dayIndex) => {
                     const dayOfWeek = date.getDay() === 0 ? 0 : date.getDay(); // Sunday = 0
-                    const schedule = getScheduleForDay(employee.id, dayOfWeek);
+                    const schedule = getScheduleForDay(employee.id, dayOfWeek, date);
                     
                     return (
-                      <td key={dayIndex} className="px-3 py-4 text-center border-r border-neutral-mid/20 min-w-[120px]">
-                        {schedule && schedule.isWorkingDay ? (
+                      <td key={dayIndex} className={`px-3 py-4 text-center border-r border-neutral-mid/20 min-w-[120px] ${schedule?.isVacation ? 'bg-yellow-50' : ''}`}>
+                        {schedule?.isVacation ? (
+                          <div className="text-xs">
+                            <div className="font-medium text-yellow-800">
+                              🏖️ Vacaciones
+                            </div>
+                          </div>
+                        ) : schedule && schedule.isWorkingDay ? (
                           <div className="text-xs">
                             <div className="font-medium text-neutral-dark">
                               {formatTime(schedule.startTime)} - {formatTime(schedule.endTime)}
                             </div>
-                            {schedule.breakStartTime && schedule.breakEndTime && (
-                              <div className="text-brand-medium mt-1">
-                                Descanso: {formatTime(schedule.breakStartTime)} - {formatTime(schedule.breakEndTime)}
+                            {schedule.isWeeklySchedule && (
+                              <div className="text-blue-600 mt-1 text-[10px]">
+                                📋 {schedule.templateName}
                               </div>
                             )}
                           </div>
@@ -1858,6 +1944,7 @@ const ScheduleModal = ({ employee, onClose }) => {
   const [loadingSchedules, setLoadingSchedules] = useState(true);
   const [showApplyTemplate, setShowApplyTemplate] = useState(false);
   const [scheduleBreaks, setScheduleBreaks] = useState({});
+  const [currentTemplate, setCurrentTemplate] = useState(null);
 
   const daysOfWeek = [
     { id: 1, name: 'Lunes' },
@@ -1898,6 +1985,21 @@ const ScheduleModal = ({ employee, onClose }) => {
         
         if (response.ok) {
           const existingSchedules = await response.json();
+          
+          // Get template info if exists
+          if (existingSchedules.length > 0 && existingSchedules[0].templateId) {
+            try {
+              const templateResponse = await fetch(`${getApiUrl()}/schedule-templates/${existingSchedules[0].templateId}`);
+              if (templateResponse.ok) {
+                const templateData = await templateResponse.json();
+                setCurrentTemplate(templateData.data);
+              }
+            } catch (error) {
+              console.error('Error loading template:', error);
+            }
+          } else {
+            setCurrentTemplate(null);
+          }
           
           // Create a map of existing schedules by day
           const scheduleMap = {};
@@ -2054,16 +2156,38 @@ const ScheduleModal = ({ employee, onClose }) => {
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
       <div className="bg-white rounded-xl p-6 w-full max-w-4xl mx-4 max-h-[90vh] overflow-y-auto">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-lg font-semibold text-neutral-dark">
-            Horarios de {employee.name} ({employee.employeeCode})
-          </h3>
-          <button
-            onClick={() => setShowApplyTemplate(true)}
-            className="px-4 py-2 bg-brand-light text-brand-cream rounded-lg hover:bg-brand-medium text-sm"
-          >
-            Aplicar Plantilla
-          </button>
+        <div className="mb-4">
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="text-lg font-semibold text-neutral-dark">
+              Horarios de {employee.name} ({employee.employeeCode})
+            </h3>
+            <button
+              onClick={() => setShowApplyTemplate(true)}
+              className="px-4 py-2 bg-brand-light text-brand-cream rounded-lg hover:bg-brand-medium text-sm"
+            >
+              Aplicar Plantilla
+            </button>
+          </div>
+          
+          {/* Mostrar plantilla actual */}
+          <div className="mt-2">
+            {currentTemplate ? (
+              <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-blue-50 border border-blue-200 rounded-lg">
+                <span className="text-sm font-medium text-blue-900">
+                  📋 Plantilla aplicada:
+                </span>
+                <span className="text-sm text-blue-700 font-semibold">
+                  {currentTemplate.name}
+                </span>
+              </div>
+            ) : (
+              <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-gray-50 border border-gray-200 rounded-lg">
+                <span className="text-sm text-gray-600 italic">
+                  ⚠️ Sin plantilla aplicada
+                </span>
+              </div>
+            )}
+          </div>
         </div>
 
         {loadingSchedules ? (
@@ -2089,73 +2213,61 @@ const ScheduleModal = ({ employee, onClose }) => {
 
               {schedule.isWorkingDay && (
                 <>
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  {/* Horario de entrada y salida */}
+                  <div className="grid grid-cols-2 gap-4 mb-3">
                     <div>
                       <label className="block text-xs font-medium text-neutral-dark mb-1">
-                        Entrada
+                        ⏰ Entrada
                       </label>
                       <input
                         type="time"
                         value={schedule.startTime}
                         onChange={(e) => handleScheduleChange(schedule.dayOfWeek, 'startTime', e.target.value)}
-                        className="w-full px-2 py-1 border border-neutral-mid/30 rounded text-sm"
+                        className="w-full px-3 py-2 border border-neutral-mid/30 rounded text-sm font-mono"
                       />
                     </div>
                     <div>
                       <label className="block text-xs font-medium text-neutral-dark mb-1">
-                        Salida
+                        🏁 Salida
                       </label>
                       <input
                         type="time"
                         value={schedule.endTime}
                         onChange={(e) => handleScheduleChange(schedule.dayOfWeek, 'endTime', e.target.value)}
-                        className="w-full px-2 py-1 border border-neutral-mid/30 rounded text-sm"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-medium text-neutral-dark mb-1">
-                        Inicio Descanso
-                      </label>
-                      <input
-                        type="time"
-                        value={schedule.breakStartTime}
-                        onChange={(e) => handleScheduleChange(schedule.dayOfWeek, 'breakStartTime', e.target.value)}
-                        className="w-full px-2 py-1 border border-neutral-mid/30 rounded text-sm"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-medium text-neutral-dark mb-1">
-                        Fin Descanso
-                      </label>
-                      <input
-                        type="time"
-                        value={schedule.breakEndTime}
-                        onChange={(e) => handleScheduleChange(schedule.dayOfWeek, 'breakEndTime', e.target.value)}
-                        className="w-full px-2 py-1 border border-neutral-mid/30 rounded text-sm"
+                        className="w-full px-3 py-2 border border-neutral-mid/30 rounded text-sm font-mono"
                       />
                     </div>
                   </div>
 
                   {/* Mostrar pausas configuradas */}
-                  {scheduleBreaks[schedule.dayOfWeek] && scheduleBreaks[schedule.dayOfWeek].length > 0 && (
-                    <div className="mt-3 pt-3 border-t border-neutral-mid/20">
-                      <h5 className="text-xs font-semibold text-neutral-dark mb-2">📋 Pausas Configuradas:</h5>
-                      <div className="space-y-1">
+                  <div className="mt-3 pt-3 border-t border-neutral-mid/20">
+                    <h5 className="text-xs font-semibold text-neutral-dark mb-2">☕ Pausas/Descansos:</h5>
+                    {scheduleBreaks[schedule.dayOfWeek] && scheduleBreaks[schedule.dayOfWeek].length > 0 ? (
+                      <div className="space-y-2">
                         {scheduleBreaks[schedule.dayOfWeek].map((breakItem, idx) => (
-                          <div key={idx} className="flex items-center gap-2 text-xs bg-blue-50 px-2 py-1 rounded">
-                            <span className="font-medium text-blue-900">{breakItem.name}</span>
-                            <span className="text-blue-700">{breakItem.startTime} - {breakItem.endTime}</span>
-                            {breakItem.isPaid && (
-                              <span className="px-1.5 py-0.5 bg-green-100 text-green-800 rounded text-[10px]">Pagada</span>
-                            )}
-                            {breakItem.isRequired && (
-                              <span className="px-1.5 py-0.5 bg-orange-100 text-orange-800 rounded text-[10px]">Obligatoria</span>
-                            )}
+                          <div key={idx} className="flex items-center justify-between gap-2 text-xs bg-blue-50 border border-blue-200 px-3 py-2 rounded">
+                            <div className="flex items-center gap-2 flex-1">
+                              <span className="font-semibold text-blue-900">{breakItem.name || `Pausa ${idx + 1}`}</span>
+                              <span className="text-blue-700 font-mono">{breakItem.startTime} - {breakItem.endTime}</span>
+                            </div>
+                            <div className="flex gap-1">
+                              {breakItem.isPaid && (
+                                <span className="px-2 py-0.5 bg-green-100 text-green-800 rounded text-[10px] font-semibold">Pagada</span>
+                              )}
+                              {breakItem.isRequired && (
+                                <span className="px-2 py-0.5 bg-orange-100 text-orange-800 rounded text-[10px] font-semibold">Obligatoria</span>
+                              )}
+                              {breakItem.isFlexible && (
+                                <span className="px-2 py-0.5 bg-purple-100 text-purple-800 rounded text-[10px] font-semibold">±{breakItem.flexibilityMinutes}min</span>
+                              )}
+                            </div>
                           </div>
                         ))}
                       </div>
-                    </div>
-                  )}
+                    ) : (
+                      <p className="text-xs text-gray-500 italic">Sin pausas configuradas</p>
+                    )}
+                  </div>
                 </>
               )}
             </div>
@@ -3639,15 +3751,19 @@ const RecordsSummaryContent = () => {
   };
 
   const formatTime = (timestamp) => {
-    return new Date(timestamp).toLocaleTimeString('es-ES', {
-      hour: '2-digit',
-      minute: '2-digit'
-    });
+    const date = new Date(timestamp);
+    const hours = String(date.getHours()).padStart(2, '0');
+    const minutes = String(date.getMinutes()).padStart(2, '0');
+    return `${hours}:${minutes}`;
   };
 
   const calculateMinutesDifference = (time1, time2) => {
-    const [h1, m1] = time1.split(':').map(Number);
-    const [h2, m2] = time2.split(':').map(Number);
+    // Ensure times are in HH:MM format
+    const cleanTime1 = time1.trim().substring(0, 5);
+    const cleanTime2 = time2.trim().substring(0, 5);
+    
+    const [h1, m1] = cleanTime1.split(':').map(Number);
+    const [h2, m2] = cleanTime2.split(':').map(Number);
     return (h2 * 60 + m2) - (h1 * 60 + m1);
   };
 
@@ -3737,8 +3853,13 @@ const RecordsSummaryContent = () => {
             const expectedExit = schedule.endTime;
             const diff = calculateMinutesDifference(exitTime, expectedExit);
             
+            // diff > 0 significa que salió ANTES (anticipada)
+            // diff < 0 significa que salió DESPUÉS (tardía)
             if (diff > 15) {
-              issues.push(`⚠️ Salida anticipada: ${exitTime} (esperado: ${expectedExit}, -${Math.abs(diff)} min)`);
+              issues.push(`⚠️ Salida anticipada: ${exitTime} (esperado: ${expectedExit}, -${diff} min)`);
+              daysWithIssues++;
+            } else if (diff < -15) {
+              issues.push(`⚠️ Salida tardía: ${exitTime} (esperado: ${expectedExit}, +${Math.abs(diff)} min)`);
               daysWithIssues++;
             }
           }
@@ -4183,6 +4304,860 @@ const RecordsSummaryContent = () => {
           </div>
         )}
       </div>
+    </div>
+  );
+};
+
+// Weekly Schedules Content - Gestión de horarios por semanas
+const WeeklySchedulesContent = () => {
+  const [employees, setEmployees] = useState([]);
+  const [templates, setTemplates] = useState([]);
+  const [selectedEmployee, setSelectedEmployee] = useState(null);
+  const [weeklySchedules, setWeeklySchedules] = useState([]);
+  const [showAssignModal, setShowAssignModal] = useState(false);
+  const [showCustomScheduleModal, setShowCustomScheduleModal] = useState(false);
+  const [assignmentData, setAssignmentData] = useState({
+    templateId: '',
+    startWeek: '',
+    endWeek: '',
+    applyToMultipleWeeks: false,
+    useCustomSchedule: false
+  });
+  const [customSchedule, setCustomSchedule] = useState({
+    monday: { isWorking: true, start: '09:00', end: '17:00' },
+    tuesday: { isWorking: true, start: '09:00', end: '17:00' },
+    wednesday: { isWorking: true, start: '09:00', end: '17:00' },
+    thursday: { isWorking: true, start: '09:00', end: '17:00' },
+    friday: { isWorking: true, start: '09:00', end: '17:00' },
+    saturday: { isWorking: false, start: '09:00', end: '17:00' },
+    sunday: { isWorking: false, start: '09:00', end: '17:00' }
+  });
+  const [customBreaks, setCustomBreaks] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [vacations, setVacations] = useState([]);
+  const [showTemplatesModal, setShowTemplatesModal] = useState(false);
+
+  React.useEffect(() => {
+    fetchEmployees();
+    fetchTemplates();
+  }, []);
+
+  const fetchEmployees = async () => {
+    try {
+      const response = await fetch(`${getApiUrl()}/employees`);
+      if (response.ok) {
+        const data = await response.json();
+        setEmployees(data);
+      }
+    } catch (error) {
+      console.error('Error fetching employees:', error);
+    }
+  };
+
+  const fetchTemplates = async () => {
+    try {
+      const response = await fetch(`${getApiUrl()}/schedule-templates`);
+      if (response.ok) {
+        const data = await response.json();
+        setTemplates(data.data || []);
+      }
+    } catch (error) {
+      console.error('Error fetching templates:', error);
+    }
+  };
+
+  const fetchWeeklySchedules = async (employeeId) => {
+    try {
+      setLoading(true);
+      const response = await fetch(`${getApiUrl()}/weekly-schedules/employee/${employeeId}`);
+      if (response.ok) {
+        const data = await response.json();
+        setWeeklySchedules(data.data || []);
+      }
+    } catch (error) {
+      console.error('Error fetching weekly schedules:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fetchVacations = async (employeeId) => {
+    try {
+      const response = await fetch(`${getApiUrl()}/vacations/employee/${employeeId}`);
+      if (response.ok) {
+        const data = await response.json();
+        setVacations(data.filter(v => v.status === 'approved'));
+      }
+    } catch (error) {
+      console.error('Error fetching vacations:', error);
+    }
+  };
+
+  const handleSelectEmployee = (employee) => {
+    setSelectedEmployee(employee);
+    fetchWeeklySchedules(employee.id);
+    fetchVacations(employee.id);
+  };
+
+  const getWeekNumber = (date) => {
+    const d = new Date(date);
+    d.setHours(0, 0, 0, 0);
+    d.setDate(d.getDate() + 4 - (d.getDay() || 7));
+    const yearStart = new Date(d.getFullYear(), 0, 1);
+    const weekNo = Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
+    return weekNo;
+  };
+
+  const getWeekRange = (date) => {
+    const d = new Date(date);
+    const day = d.getDay();
+    const diff = d.getDate() - day + (day === 0 ? -6 : 1); // Lunes
+    const monday = new Date(d.setDate(diff));
+    const sunday = new Date(monday);
+    sunday.setDate(monday.getDate() + 6);
+    
+    return {
+      start: monday.toISOString().split('T')[0],
+      end: sunday.toISOString().split('T')[0]
+    };
+  };
+
+  const handleAssignTemplate = async () => {
+    if (!selectedEmployee || !assignmentData.templateId || !assignmentData.startWeek) {
+      alert('Por favor completa todos los campos requeridos');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const weekRange = getWeekRange(assignmentData.startWeek);
+      
+      if (assignmentData.applyToMultipleWeeks && assignmentData.endWeek) {
+        // Aplicar a múltiples semanas
+        const startDate = new Date(assignmentData.startWeek);
+        const endDate = new Date(assignmentData.endWeek);
+        const weeks = [];
+        
+        let currentDate = new Date(startDate);
+        while (currentDate <= endDate) {
+          const range = getWeekRange(currentDate);
+          weeks.push(range);
+          currentDate.setDate(currentDate.getDate() + 7);
+        }
+
+        // Crear horarios semanales para cada semana
+        for (const week of weeks) {
+          const response = await fetch(`${getApiUrl()}/weekly-schedules`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              employeeId: selectedEmployee.id,
+              templateId: assignmentData.templateId,
+              weekStart: week.start,
+              weekEnd: week.end,
+              year: new Date(week.start).getFullYear(),
+              weekNumber: getWeekNumber(week.start),
+              createdBy: selectedEmployee.id
+            })
+          });
+
+          if (!response.ok) {
+            console.error(`Error creating schedule for week ${week.start}`);
+          }
+          
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
+
+        alert(`Plantilla aplicada a ${weeks.length} semanas`);
+      } else {
+        // Aplicar a una sola semana
+        const response = await fetch(`${getApiUrl()}/weekly-schedules`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            employeeId: selectedEmployee.id,
+            templateId: assignmentData.templateId,
+            weekStart: weekRange.start,
+            weekEnd: weekRange.end,
+            year: new Date(weekRange.start).getFullYear(),
+            weekNumber: getWeekNumber(weekRange.start),
+            createdBy: selectedEmployee.id
+          })
+        });
+
+        if (response.ok) {
+          alert('Plantilla aplicada correctamente');
+        } else {
+          const errorData = await response.json();
+          throw new Error(errorData.error || 'Error al aplicar plantilla');
+        }
+      }
+
+      setShowAssignModal(false);
+      setAssignmentData({
+        templateId: '',
+        startWeek: '',
+        endWeek: '',
+        applyToMultipleWeeks: false
+      });
+      fetchWeeklySchedules(selectedEmployee.id);
+    } catch (error) {
+      console.error('Error:', error);
+      alert('Error al asignar plantilla: ' + error.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDeleteWeeklySchedule = async (scheduleId) => {
+    if (!confirm('¿Eliminar este horario semanal?')) return;
+
+    try {
+      const response = await fetch(`${getApiUrl()}/weekly-schedules/${scheduleId}`, {
+        method: 'DELETE'
+      });
+
+      if (response.ok) {
+        alert('Horario eliminado');
+        fetchWeeklySchedules(selectedEmployee.id);
+      }
+    } catch (error) {
+      console.error('Error:', error);
+      alert('Error al eliminar horario');
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="bg-white rounded-xl shadow-sm p-6">
+        <div className="flex justify-between items-start mb-6">
+          <div>
+            <h2 className="text-2xl font-bold text-neutral-dark mb-2">
+              📅 Gestión de Horarios Semanales
+            </h2>
+            <p className="text-sm text-neutral-medium">
+              Asigna diferentes plantillas de horarios a diferentes semanas para cada empleado
+            </p>
+          </div>
+          <button
+            onClick={() => setShowTemplatesModal(true)}
+            className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 flex items-center gap-2"
+          >
+            <Settings className="h-4 w-4" />
+            Gestionar Plantillas
+          </button>
+        </div>
+
+        {/* Selector de empleado */}
+        <div className="mb-6">
+          <label className="block text-sm font-medium text-neutral-dark mb-2">
+            Selecciona un empleado
+          </label>
+          <select
+            value={selectedEmployee?.id || ''}
+            onChange={(e) => {
+              const emp = employees.find(emp => emp.id === e.target.value);
+              if (emp) handleSelectEmployee(emp);
+            }}
+            className="w-full px-4 py-2 border border-neutral-mid/30 rounded-lg focus:ring-2 focus:ring-brand-light"
+          >
+            <option value="">-- Selecciona un empleado --</option>
+            {employees.map(emp => (
+              <option key={emp.id} value={emp.id}>
+                {emp.name} ({emp.employeeCode})
+              </option>
+            ))}
+          </select>
+        </div>
+
+        {selectedEmployee && (
+          <>
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-lg font-semibold text-neutral-dark">
+                Horarios de {selectedEmployee.name}
+              </h3>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setShowAssignModal(true)}
+                  className="px-4 py-2 bg-brand-light text-brand-cream rounded-lg hover:bg-brand-medium flex items-center gap-2"
+                >
+                  <Plus className="h-4 w-4" />
+                  Asignar Plantilla
+                </button>
+                <button
+                  onClick={() => setShowCustomScheduleModal(true)}
+                  className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 flex items-center gap-2"
+                >
+                  <Plus className="h-4 w-4" />
+                  Horario Personalizado
+                </button>
+              </div>
+            </div>
+
+            {loading ? (
+              <div className="flex justify-center py-8">
+                <LoadingSpinner />
+              </div>
+            ) : weeklySchedules.length === 0 ? (
+              <div className="text-center py-8 bg-gray-50 rounded-lg">
+                <p className="text-neutral-medium">
+                  No hay horarios semanales asignados. Haz clic en "Asignar Plantilla" para comenzar.
+                </p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="min-w-full divide-y divide-neutral-mid/20">
+                  <thead className="bg-neutral-light">
+                    <tr>
+                      <th className="px-4 py-3 text-left text-xs font-semibold text-neutral-dark uppercase">
+                        Semana
+                      </th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold text-neutral-dark uppercase">
+                        Año
+                      </th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold text-neutral-dark uppercase">
+                        Rango de Fechas
+                      </th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold text-neutral-dark uppercase">
+                        Tipo/Plantilla
+                      </th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold text-neutral-dark uppercase">
+                        Estado
+                      </th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold text-neutral-dark uppercase">
+                        Acciones
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="bg-white divide-y divide-neutral-mid/20">
+                    {weeklySchedules.map((schedule) => {
+                      const template = templates.find(t => t.id === schedule.templateId);
+                      
+                      // Get correct date fields (backend might return startDate/endDate or weekStart/weekEnd)
+                      const weekStart = schedule.weekStart || schedule.startDate;
+                      const weekEnd = schedule.weekEnd || schedule.endDate;
+                      
+                      // Check if there's vacation in this week
+                      const hasVacation = vacations.some(v => {
+                        const vStart = new Date(v.startDate);
+                        const vEnd = new Date(v.endDate);
+                        const wStart = new Date(weekStart);
+                        const wEnd = new Date(weekEnd);
+                        return (vStart <= wEnd && vEnd >= wStart);
+                      });
+                      
+                      return (
+                        <tr key={schedule.id} className={`hover:bg-neutral-light/50 ${hasVacation ? 'bg-yellow-50' : ''}`}>
+                          <td className="px-4 py-3 whitespace-nowrap">
+                            <span className="font-semibold text-neutral-dark">
+                              Semana {schedule.weekNumber}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 whitespace-nowrap">
+                            <span className="text-sm text-neutral-medium">
+                              {schedule.year}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 whitespace-nowrap">
+                            <span className="text-sm text-neutral-dark">
+                              {new Date(weekStart).toLocaleDateString('es-ES')} - {new Date(weekEnd).toLocaleDateString('es-ES')}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3">
+                            {template ? (
+                              <span className="inline-flex items-center px-3 py-1 rounded-full text-sm bg-blue-100 text-blue-800">
+                                📋 {template.name}
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center px-3 py-1 rounded-full text-sm bg-green-100 text-green-800">
+                                ✏️ Personalizado
+                              </span>
+                            )}
+                          </td>
+                          <td className="px-4 py-3">
+                            {hasVacation ? (
+                              <span className="inline-flex items-center px-3 py-1 rounded-full text-sm bg-yellow-100 text-yellow-800">
+                                🏖️ Vacaciones
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center px-3 py-1 rounded-full text-sm bg-green-100 text-green-800">
+                                ✅ Activo
+                              </span>
+                            )}
+                          </td>
+                          <td className="px-4 py-3">
+                            <button
+                              onClick={() => handleDeleteWeeklySchedule(schedule.id)}
+                              className="text-red-600 hover:text-red-800"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                    
+                    {/* Show vacations without schedules */}
+                    {vacations.map(vacation => {
+                      const vStart = new Date(vacation.startDate);
+                      const vEnd = new Date(vacation.endDate);
+                      
+                      // Get all weeks in vacation range
+                      const vacationWeeks = [];
+                      let currentDate = new Date(vStart);
+                      while (currentDate <= vEnd) {
+                        const weekNum = getWeekNumber(currentDate);
+                        const year = currentDate.getFullYear();
+                        const weekRange = getWeekRange(currentDate.toISOString().split('T')[0]);
+                        
+                        // Check if this week already has a schedule
+                        const hasSchedule = weeklySchedules.some(s => 
+                          s.year === year && s.weekNumber === weekNum
+                        );
+                        
+                        if (!hasSchedule) {
+                          vacationWeeks.push({
+                            weekNumber: weekNum,
+                            year: year,
+                            weekStart: weekRange.start,
+                            weekEnd: weekRange.end,
+                            vacationId: vacation.id
+                          });
+                        }
+                        
+                        currentDate.setDate(currentDate.getDate() + 7);
+                      }
+                      
+                      return vacationWeeks.map((vw, idx) => (
+                        <tr key={`vacation-${vacation.id}-${idx}`} className="bg-yellow-50 hover:bg-yellow-100">
+                          <td className="px-4 py-3 whitespace-nowrap">
+                            <span className="font-semibold text-neutral-dark">
+                              Semana {vw.weekNumber}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 whitespace-nowrap">
+                            <span className="text-sm text-neutral-medium">
+                              {vw.year}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 whitespace-nowrap">
+                            <span className="text-sm text-neutral-dark">
+                              {new Date(vw.weekStart).toLocaleDateString('es-ES')} - {new Date(vw.weekEnd).toLocaleDateString('es-ES')}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3">
+                            <span className="inline-flex items-center px-3 py-1 rounded-full text-sm bg-gray-100 text-gray-600">
+                              - Sin horario -
+                            </span>
+                          </td>
+                          <td className="px-4 py-3">
+                            <span className="inline-flex items-center px-3 py-1 rounded-full text-sm bg-yellow-100 text-yellow-800">
+                              🏖️ Vacaciones
+                            </span>
+                          </td>
+                          <td className="px-4 py-3">
+                            <span className="text-xs text-gray-500">-</span>
+                          </td>
+                        </tr>
+                      ));
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+
+      {/* Modal de asignación */}
+      {showAssignModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl p-6 w-full max-w-md mx-4">
+            <h3 className="text-lg font-semibold text-neutral-dark mb-4">
+              Asignar Plantilla a Semana(s)
+            </h3>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-neutral-dark mb-2">
+                  Plantilla de Horario
+                </label>
+                <select
+                  value={assignmentData.templateId}
+                  onChange={(e) => setAssignmentData({...assignmentData, templateId: e.target.value})}
+                  className="w-full px-3 py-2 border border-neutral-mid/30 rounded-lg"
+                >
+                  <option value="">Selecciona una plantilla...</option>
+                  {templates.map(template => (
+                    <option key={template.id} value={template.id}>
+                      {template.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-neutral-dark mb-2">
+                  Semana de Inicio (selecciona cualquier día de la semana)
+                </label>
+                <input
+                  type="date"
+                  value={assignmentData.startWeek}
+                  onChange={(e) => setAssignmentData({...assignmentData, startWeek: e.target.value})}
+                  className="w-full px-3 py-2 border border-neutral-mid/30 rounded-lg"
+                />
+                {assignmentData.startWeek && (
+                  <p className="text-xs text-neutral-medium mt-1">
+                    Semana: {getWeekRange(assignmentData.startWeek).start} al {getWeekRange(assignmentData.startWeek).end}
+                  </p>
+                )}
+              </div>
+
+              <div>
+                <label className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={assignmentData.applyToMultipleWeeks}
+                    onChange={(e) => setAssignmentData({...assignmentData, applyToMultipleWeeks: e.target.checked})}
+                    className="rounded"
+                  />
+                  <span className="text-sm text-neutral-dark">
+                    Aplicar a múltiples semanas
+                  </span>
+                </label>
+              </div>
+
+              {assignmentData.applyToMultipleWeeks && (
+                <div>
+                  <label className="block text-sm font-medium text-neutral-dark mb-2">
+                    Semana de Fin
+                  </label>
+                  <input
+                    type="date"
+                    value={assignmentData.endWeek}
+                    onChange={(e) => setAssignmentData({...assignmentData, endWeek: e.target.value})}
+                    className="w-full px-3 py-2 border border-neutral-mid/30 rounded-lg"
+                  />
+                  {assignmentData.endWeek && (
+                    <p className="text-xs text-neutral-medium mt-1">
+                      Hasta semana: {getWeekRange(assignmentData.endWeek).start} al {getWeekRange(assignmentData.endWeek).end}
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div className="flex justify-end gap-3 mt-6">
+              <button
+                onClick={() => {
+                  setShowAssignModal(false);
+                  setAssignmentData({
+                    templateId: '',
+                    startWeek: '',
+                    endWeek: '',
+                    applyToMultipleWeeks: false
+                  });
+                }}
+                className="px-4 py-2 border border-neutral-mid/30 rounded-lg hover:bg-neutral-light"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleAssignTemplate}
+                disabled={loading}
+                className="px-4 py-2 bg-brand-light text-brand-cream rounded-lg hover:bg-brand-medium disabled:opacity-50"
+              >
+                {loading ? 'Asignando...' : 'Asignar'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de horario personalizado */}
+      {showCustomScheduleModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 overflow-y-auto">
+          <div className="bg-white rounded-xl p-6 w-full max-w-2xl mx-4 my-8">
+            <h3 className="text-lg font-semibold text-neutral-dark mb-4">
+              Crear Horario Personalizado para Semana
+            </h3>
+
+            <div className="space-y-4 mb-6">
+              <div>
+                <label className="block text-sm font-medium text-neutral-dark mb-2">
+                  Semana (selecciona cualquier día)
+                </label>
+                <input
+                  type="date"
+                  value={assignmentData.startWeek}
+                  onChange={(e) => setAssignmentData({...assignmentData, startWeek: e.target.value})}
+                  className="w-full px-3 py-2 border border-neutral-mid/30 rounded-lg"
+                />
+                {assignmentData.startWeek && (
+                  <p className="text-xs text-neutral-medium mt-1">
+                    Semana: {getWeekRange(assignmentData.startWeek).start} al {getWeekRange(assignmentData.startWeek).end}
+                  </p>
+                )}
+              </div>
+
+              <div className="border border-neutral-mid/20 rounded-lg p-4">
+                <h4 className="font-semibold text-neutral-dark mb-3">Horarios por día</h4>
+                <div className="space-y-3">
+                  {Object.entries(customSchedule).map(([day, schedule]) => (
+                    <div key={day} className="flex items-center gap-3">
+                      <label className="flex items-center min-w-[100px]">
+                        <input
+                          type="checkbox"
+                          checked={schedule.isWorking}
+                          onChange={(e) => setCustomSchedule({
+                            ...customSchedule,
+                            [day]: { ...schedule, isWorking: e.target.checked }
+                          })}
+                          className="mr-2"
+                        />
+                        <span className="text-sm capitalize">{day === 'monday' ? 'Lunes' : day === 'tuesday' ? 'Martes' : day === 'wednesday' ? 'Miércoles' : day === 'thursday' ? 'Jueves' : day === 'friday' ? 'Viernes' : day === 'saturday' ? 'Sábado' : 'Domingo'}</span>
+                      </label>
+                      {schedule.isWorking && (
+                        <>
+                          <input
+                            type="time"
+                            value={schedule.start}
+                            onChange={(e) => setCustomSchedule({
+                              ...customSchedule,
+                              [day]: { ...schedule, start: e.target.value }
+                            })}
+                            className="px-2 py-1 border border-neutral-mid/30 rounded text-sm"
+                          />
+                          <span className="text-sm">-</span>
+                          <input
+                            type="time"
+                            value={schedule.end}
+                            onChange={(e) => setCustomSchedule({
+                              ...customSchedule,
+                              [day]: { ...schedule, end: e.target.value }
+                            })}
+                            className="px-2 py-1 border border-neutral-mid/30 rounded text-sm"
+                          />
+                        </>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Pausas/Descansos */}
+              <div className="border border-neutral-mid/20 rounded-lg p-4">
+                <div className="flex justify-between items-center mb-3">
+                  <h4 className="font-semibold text-neutral-dark">☕ Pausas/Descansos</h4>
+                  <button
+                    onClick={() => setCustomBreaks([...customBreaks, {
+                      name: '',
+                      startTime: '13:00',
+                      endTime: '14:00',
+                      isPaid: true,
+                      isRequired: false
+                    }])}
+                    className="px-3 py-1 bg-blue-600 text-white rounded text-sm hover:bg-blue-700"
+                  >
+                    + Añadir Pausa
+                  </button>
+                </div>
+                
+                {customBreaks.length === 0 ? (
+                  <p className="text-sm text-gray-500 italic">Sin pausas configuradas</p>
+                ) : (
+                  <div className="space-y-2">
+                    {customBreaks.map((breakItem, idx) => (
+                      <div key={idx} className="flex items-center gap-2 p-2 bg-gray-50 rounded">
+                        <input
+                          type="text"
+                          placeholder="Nombre (ej: Comida)"
+                          value={breakItem.name}
+                          onChange={(e) => {
+                            const newBreaks = [...customBreaks];
+                            newBreaks[idx].name = e.target.value;
+                            setCustomBreaks(newBreaks);
+                          }}
+                          className="flex-1 px-2 py-1 border border-neutral-mid/30 rounded text-sm"
+                        />
+                        <input
+                          type="time"
+                          value={breakItem.startTime}
+                          onChange={(e) => {
+                            const newBreaks = [...customBreaks];
+                            newBreaks[idx].startTime = e.target.value;
+                            setCustomBreaks(newBreaks);
+                          }}
+                          className="px-2 py-1 border border-neutral-mid/30 rounded text-sm"
+                        />
+                        <span>-</span>
+                        <input
+                          type="time"
+                          value={breakItem.endTime}
+                          onChange={(e) => {
+                            const newBreaks = [...customBreaks];
+                            newBreaks[idx].endTime = e.target.value;
+                            setCustomBreaks(newBreaks);
+                          }}
+                          className="px-2 py-1 border border-neutral-mid/30 rounded text-sm"
+                        />
+                        <label className="flex items-center text-xs">
+                          <input
+                            type="checkbox"
+                            checked={breakItem.isPaid}
+                            onChange={(e) => {
+                              const newBreaks = [...customBreaks];
+                              newBreaks[idx].isPaid = e.target.checked;
+                              setCustomBreaks(newBreaks);
+                            }}
+                            className="mr-1"
+                          />
+                          Pagada
+                        </label>
+                        <button
+                          onClick={() => {
+                            setCustomBreaks(customBreaks.filter((_, i) => i !== idx));
+                          }}
+                          className="text-red-600 hover:text-red-800"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => {
+                  setShowCustomScheduleModal(false);
+                  setAssignmentData({
+                    templateId: '',
+                    startWeek: '',
+                    endWeek: '',
+                    applyToMultipleWeeks: false,
+                    useCustomSchedule: false
+                  });
+                }}
+                className="px-4 py-2 border border-neutral-mid/30 rounded-lg hover:bg-neutral-light"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={async () => {
+                  if (!selectedEmployee || !assignmentData.startWeek) {
+                    alert('Por favor selecciona una semana');
+                    return;
+                  }
+
+                  setLoading(true);
+                  try {
+                    // Create custom template on-the-fly
+                    const weekRange = getWeekRange(assignmentData.startWeek);
+                    
+                    // Create a temporary template with custom schedule
+                    const templateResponse = await fetch(`${getApiUrl()}/schedule-templates`, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({
+                        name: `Personalizado ${selectedEmployee.name} - Semana ${getWeekNumber(assignmentData.startWeek)}`,
+                        description: 'Horario personalizado generado automáticamente',
+                        createdBy: selectedEmployee.id,
+                        days: Object.entries(customSchedule).map(([day, sched], idx) => ({
+                          dayOfWeek: ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'].indexOf(day),
+                          isWorkingDay: sched.isWorking,
+                          startTime: sched.start,
+                          endTime: sched.end
+                        }))
+                      })
+                    });
+
+                    if (!templateResponse.ok) throw new Error('Error creating template');
+                    
+                    const templateData = await templateResponse.json();
+                    const templateId = templateData.data.id;
+                    const templateDays = templateData.data.templateDays || [];
+
+                    // Create breaks for each template day if customBreaks exist
+                    if (customBreaks.length > 0) {
+                      for (const templateDay of templateDays) {
+                        for (const breakItem of customBreaks) {
+                          try {
+                            await fetch(`${getApiUrl()}/schedule-breaks`, {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({
+                                parentType: 'template_day',
+                                parentId: templateDay.id,
+                                name: breakItem.name || 'Pausa',
+                                startTime: breakItem.startTime,
+                                endTime: breakItem.endTime,
+                                breakType: 'meal',
+                                isPaid: breakItem.isPaid,
+                                isRequired: breakItem.isRequired || false,
+                                createdBy: selectedEmployee.id
+                              })
+                            });
+                            await new Promise(resolve => setTimeout(resolve, 50));
+                          } catch (error) {
+                            console.error('Error creating break:', error);
+                          }
+                        }
+                      }
+                    }
+
+                    // Create weekly schedule with this template
+                    const response = await fetch(`${getApiUrl()}/weekly-schedules`, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({
+                        employeeId: selectedEmployee.id,
+                        templateId: templateId,
+                        weekStart: weekRange.start,
+                        weekEnd: weekRange.end,
+                        year: new Date(weekRange.start).getFullYear(),
+                        weekNumber: getWeekNumber(weekRange.start),
+                        notes: 'Horario personalizado',
+                        createdBy: selectedEmployee.id
+                      })
+                    });
+
+                    if (response.ok) {
+                      alert('Horario personalizado creado correctamente');
+                      setShowCustomScheduleModal(false);
+                      setCustomBreaks([]);
+                      fetchWeeklySchedules(selectedEmployee.id);
+                    } else {
+                      throw new Error('Error al crear horario');
+                    }
+                  } catch (error) {
+                    console.error('Error:', error);
+                    alert('Error al crear horario personalizado: ' + error.message);
+                  } finally {
+                    setLoading(false);
+                  }
+                }}
+                disabled={loading}
+                className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50"
+              >
+                {loading ? 'Creando...' : 'Crear Horario'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de gestión de plantillas */}
+      {showTemplatesModal && (
+        <TemplatesModal 
+          onClose={() => {
+            setShowTemplatesModal(false);
+            fetchTemplates(); // Refresh templates after closing modal
+          }} 
+        />
+      )}
     </div>
   );
 };
