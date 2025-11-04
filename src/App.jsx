@@ -6,6 +6,9 @@ import AdminLoginPage from './pages/AdminLoginPage';
 import AdminDashboard from './pages/AdminDashboard';
 import EmployeeKioskPage from './pages/EmployeeKioskPage';
 import EmployeePortal from './pages/EmployeePortal';
+import ScheduleTemplatesPage from './pages/ScheduleTemplatesPage';
+import WeeklySchedulingPage from './pages/WeeklySchedulingPage';
+import AdvancedSchedulingDashboard from './pages/AdvancedSchedulingDashboard';
 import LoadingSpinner from './components/LoadingSpinner';
 
 const ProtectedRoute = ({ children, adminOnly = false }) => {
@@ -64,6 +67,33 @@ const AppRoutes = () => {
         element={
           <ProtectedAdminRoute>
             <AdminDashboard />
+          </ProtectedAdminRoute>
+        } 
+      />
+      
+      <Route 
+        path="/schedule-templates" 
+        element={
+          <ProtectedAdminRoute>
+            <ScheduleTemplatesPage />
+          </ProtectedAdminRoute>
+        } 
+      />
+      
+      <Route 
+        path="/weekly-scheduling" 
+        element={
+          <ProtectedAdminRoute>
+            <WeeklySchedulingPage />
+          </ProtectedAdminRoute>
+        } 
+      />
+      
+      <Route 
+        path="/advanced-scheduling" 
+        element={
+          <ProtectedAdminRoute>
+            <AdvancedSchedulingDashboard />
           </ProtectedAdminRoute>
         } 
       />
