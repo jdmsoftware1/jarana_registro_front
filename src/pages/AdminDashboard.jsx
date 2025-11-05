@@ -29,9 +29,7 @@ import {
 import LoadingSpinner from '../components/LoadingSpinner';
 import Footer from '../components/Footer';
 import AIChat from '../components/AIChat';
-
-// Helper function for API URL
-const getApiUrl = () => import.meta.env.VITE_API_URL || 'http://localhost:3000/api';
+import { getApiUrl } from '../config/api';
 
 // Helper function to calculate time ago
 const getTimeAgo = (timestamp) => {

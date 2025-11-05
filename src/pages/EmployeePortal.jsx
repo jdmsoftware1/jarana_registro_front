@@ -21,8 +21,7 @@ import { es } from 'date-fns/locale';
 import Footer from '../components/Footer';
 import AIChat from '../components/AIChat';
 import LoadingSpinner from '../components/LoadingSpinner';
-
-const getApiUrl = () => import.meta.env.VITE_API_URL || 'http://localhost:3000/api';
+import { getApiUrl } from '../config/api';
 
 const EmployeePortal = () => {
   const navigate = useNavigate();
