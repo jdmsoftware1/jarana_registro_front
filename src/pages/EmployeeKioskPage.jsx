@@ -3,10 +3,8 @@ import { Link, Navigate } from 'react-router-dom';
 import { ArrowLeft, User, Smartphone, Clock, LogIn, LogOut, CheckCircle, XCircle, AlertTriangle } from 'lucide-react';
 import { format } from 'date-fns';
 import { useSystem } from '../contexts/SystemContext';
+import { getApiUrl } from '../config/api';
 import Footer from '../components/Footer';
-
-// Helper function for API URL
-const getApiUrl = () => import.meta.env.VITE_API_URL || 'http://localhost:3000/api';
 
 const EmployeeKioskPage = () => {
   const { systemActive, supervisor } = useSystem();

@@ -1,4 +1,10 @@
-const API_BASE_URL = '/api';
+// Obtener URL base de la API desde variables de entorno
+const getApiBaseUrl = () => {
+  const baseUrl = import.meta.env.VITE_API_URL || 'http://localhost:3000';
+  return `${baseUrl}/api`;
+};
+
+const API_BASE_URL = getApiBaseUrl();
 
 class ApiError extends Error {
   constructor(message, status, data) {
