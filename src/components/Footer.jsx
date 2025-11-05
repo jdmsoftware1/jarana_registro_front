@@ -11,7 +11,7 @@ const Footer = () => {
             © {currentYear} <span className="font-semibold">Jarana</span>. Todos los derechos reservados.
           </div>
           <div className="text-sm text-brand-medium">
-            Designed by <span className="font-semibold text-brand-accent">JDMSoftware</span>
+            Designed by <span className="font-semibold text-brand-accent">JDMSoftware v1.0.2</span>
           </div>
         </div>
       </div>
