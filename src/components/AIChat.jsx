@@ -72,10 +72,20 @@ const AIChat = ({ userId, userRole = 'employee' }) => {
       }
     } catch (error) {
       console.error('Error sending message:', error);
+      
+      // Determinar mensaje de error apropiado
+      let errorContent = '⚠️ Error en el servidor: Ha ocurrido un error. Por favor, reinicie el sistema o póngase en contacto con el administrador.';
+      
+      if (error.message.includes('fetch') || error.message.includes('Failed to fetch')) {
+        errorContent = '⚠️ Error en el servidor: No se puede conectar con el servidor. Por favor, reinicie el sistema o póngase en contacto con el administrador.';
+      } else if (error.message.includes('timeout')) {
+        errorContent = '⚠️ Error en el servidor: El servidor no responde. Por favor, reinicie el sistema o póngase en contacto con el administrador.';
+      }
+      
       const errorMessage = {
         id: Date.now() + 1,
         type: 'ai',
-        content: 'Lo siento, hubo un error al procesar tu mensaje. Por favor, intenta de nuevo.',
+        content: errorContent,
         timestamp: new Date(),
         isError: true
       };

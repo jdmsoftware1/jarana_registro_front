@@ -16,7 +16,15 @@ import {
   Shield,
   Filter,
   Download,
-  Trash2
+  Trash2,
+  Copy,
+  X,
+  Brain,
+  Upload,
+  RefreshCw,
+  Eye,
+  Edit,
+  Save
 } from 'lucide-react';
 import LoadingSpinner from '../components/LoadingSpinner';
 import Footer from '../components/Footer';
@@ -71,6 +79,7 @@ const AdminDashboard = () => {
     { id: 'vacations', label: 'Vacaciones', icon: Shield },
     { id: 'weekly', label: 'Vista Semanal', icon: FileText },
     { id: 'ai-insights', label: 'IA Insights', icon: BarChart3 },
+    { id: 'ai-knowledge', label: 'Gestión IA', icon: Brain },
     { id: 'settings', label: 'Configuración', icon: Settings }
   ];
 
@@ -170,6 +179,7 @@ const AdminDashboard = () => {
         {activeTab === 'vacations' && <VacationsContent />}
         {activeTab === 'weekly' && <WeeklyViewContent />}
         {activeTab === 'ai-insights' && <AIInsightsContent />}
+        {activeTab === 'ai-knowledge' && <AIKnowledgeContent />}
         {activeTab === 'settings' && <SettingsContent />}
       </div>
       
@@ -272,6 +282,17 @@ const DashboardContent = () => {
       ]);
     } catch (error) {
       console.error('Error fetching dashboard data:', error);
+      
+      // Mostrar mensaje de error al usuario
+      let errorMessage = '⚠️ Error en el servidor: Ha ocurrido un error. Por favor, reinicie el sistema o póngase en contacto con el administrador.';
+      
+      if (error.message.includes('fetch') || error.message.includes('Failed to fetch')) {
+        errorMessage = '⚠️ Error en el servidor: No se puede conectar con el servidor. Por favor, reinicie el sistema o póngase en contacto con el administrador.';
+      } else if (error.message.includes('NetworkError') || error.name === 'TypeError') {
+        errorMessage = '⚠️ Error en el servidor: No se puede conectar con el servidor. Por favor, reinicie el sistema o póngase en contacto con el administrador.';
+      }
+      
+      alert(errorMessage);
     } finally {
       setLoading(false);
     }
@@ -2559,6 +2580,11 @@ const TemplatesModal = ({ onClose }) => {
   const [breaks, setBreaks] = useState([]);
   const [employees, setEmployees] = useState([]);
   const [selectedEmployees, setSelectedEmployees] = useState([]);
+  const [applyDates, setApplyDates] = useState({
+    startDate: '',
+    endDate: '',
+    applyToMultipleWeeks: false
+  });
   const [formData, setFormData] = useState({
     name: '',
     description: '',
@@ -2784,38 +2810,103 @@ const TemplatesModal = ({ onClose }) => {
     setShowApplyModal(true);
   };
 
+  const getWeekRange = (dateString) => {
+    const date = new Date(dateString);
+    const day = date.getDay();
+    const diff = date.getDate() - day + (day === 0 ? -6 : 1);
+    const monday = new Date(date.setDate(diff));
+    monday.setHours(0, 0, 0, 0);
+    const sunday = new Date(monday);
+    sunday.setDate(monday.getDate() + 6);
+    sunday.setHours(23, 59, 59, 999);
+    return {
+      start: monday.toISOString().split('T')[0],
+      end: sunday.toISOString().split('T')[0]
+    };
+  };
+
+  const getWeekNumber = (date) => {
+    const d = new Date(date);
+    d.setHours(0, 0, 0, 0);
+    d.setDate(d.getDate() + 4 - (d.getDay() || 7));
+    const yearStart = new Date(d.getFullYear(), 0, 1);
+    return Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
+  };
+
   const handleApplyTemplate = async () => {
     if (selectedEmployees.length === 0) {
       alert('Selecciona al menos un empleado');
       return;
     }
 
+    if (!applyDates.startDate) {
+      alert('Selecciona una fecha de inicio');
+      return;
+    }
+
+    if (applyDates.applyToMultipleWeeks && !applyDates.endDate) {
+      alert('Selecciona una fecha de fin');
+      return;
+    }
+
     try {
-      // Aplicar plantilla a cada empleado seleccionado
-      const promises = selectedEmployees.map(employeeId =>
-        fetch(`${getApiUrl()}/schedules/apply-template`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            employeeId,
-            templateId: selectedTemplateForApply.id
-          })
-        })
-      );
+      let successCount = 0;
+      let errorCount = 0;
 
-      const results = await Promise.all(promises);
-      const allSuccess = results.every(r => r.ok);
-
-      if (allSuccess) {
-        alert(`Plantilla "${selectedTemplateForApply.name}" aplicada a ${selectedEmployees.length} empleado(s) exitosamente`);
-        setShowApplyModal(false);
-        setSelectedEmployees([]);
-        setSelectedTemplateForApply(null);
-        // Recargar empleados para actualizar las plantillas asignadas
-        await fetchEmployees();
+      // Calcular semanas a aplicar
+      const weeks = [];
+      if (applyDates.applyToMultipleWeeks) {
+        const startDate = new Date(applyDates.startDate);
+        const endDate = new Date(applyDates.endDate);
+        let currentDate = new Date(startDate);
+        
+        while (currentDate <= endDate) {
+          const range = getWeekRange(currentDate.toISOString().split('T')[0]);
+          weeks.push(range);
+          currentDate.setDate(currentDate.getDate() + 7);
+        }
       } else {
-        alert('Algunos empleados no pudieron ser actualizados');
+        weeks.push(getWeekRange(applyDates.startDate));
       }
+
+      // Aplicar a cada empleado y cada semana
+      for (const employeeId of selectedEmployees) {
+        for (const week of weeks) {
+          try {
+            const response = await fetch(`${getApiUrl()}/weekly-schedules`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                employeeId: employeeId,
+                templateId: selectedTemplateForApply.id,
+                weekStart: week.start,
+                weekEnd: week.end,
+                year: new Date(week.start).getFullYear(),
+                weekNumber: getWeekNumber(week.start),
+                createdBy: employeeId // Using employeeId as creator
+              })
+            });
+
+            if (response.ok) {
+              successCount++;
+            } else {
+              errorCount++;
+            }
+          } catch (error) {
+            errorCount++;
+          }
+          
+          // Small delay to avoid rate limiting
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
+      }
+
+      alert(`Plantilla "${selectedTemplateForApply.name}" aplicada:\n✅ Exitosos: ${successCount}\n❌ Errores: ${errorCount}`);
+      setShowApplyModal(false);
+      setSelectedEmployees([]);
+      setSelectedTemplateForApply(null);
+      setApplyDates({ startDate: '', endDate: '', applyToMultipleWeeks: false });
+      await fetchEmployees();
     } catch (error) {
       alert('Error al aplicar plantilla: ' + error.message);
     }
@@ -3080,8 +3171,54 @@ const TemplatesModal = ({ onClose }) => {
               </div>
 
               <p className="text-sm text-neutral-medium mb-4">
-                Selecciona los empleados a los que quieres aplicar esta plantilla de horario
+                Selecciona los empleados y las fechas para aplicar esta plantilla
               </p>
+
+              {/* Selector de fechas */}
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
+                <h5 className="font-semibold text-blue-900 mb-3">📅 Fechas de Aplicación</h5>
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-sm font-medium text-blue-900 mb-1">
+                      Fecha de inicio (semana)
+                    </label>
+                    <input
+                      type="date"
+                      value={applyDates.startDate}
+                      onChange={(e) => setApplyDates({...applyDates, startDate: e.target.value})}
+                      className="w-full px-3 py-2 border border-blue-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                  
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      id="applyMultiple"
+                      checked={applyDates.applyToMultipleWeeks}
+                      onChange={(e) => setApplyDates({...applyDates, applyToMultipleWeeks: e.target.checked})}
+                      className="w-4 h-4"
+                    />
+                    <label htmlFor="applyMultiple" className="text-sm font-medium text-blue-900">
+                      Aplicar a múltiples semanas consecutivas
+                    </label>
+                  </div>
+
+                  {applyDates.applyToMultipleWeeks && (
+                    <div>
+                      <label className="block text-sm font-medium text-blue-900 mb-1">
+                        Fecha de fin
+                      </label>
+                      <input
+                        type="date"
+                        value={applyDates.endDate}
+                        onChange={(e) => setApplyDates({...applyDates, endDate: e.target.value})}
+                        min={applyDates.startDate}
+                        className="w-full px-3 py-2 border border-blue-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                      />
+                    </div>
+                  )}
+                </div>
+              </div>
 
               <div className="space-y-2 mb-6 max-h-96 overflow-y-auto">
                 {employees.length === 0 ? (
@@ -3152,7 +3289,7 @@ const TemplatesModal = ({ onClose }) => {
                 </button>
                 <button
                   onClick={handleApplyTemplate}
-                  disabled={selectedEmployees.length === 0}
+                  disabled={selectedEmployees.length === 0 || !applyDates.startDate || (applyDates.applyToMultipleWeeks && !applyDates.endDate)}
                   className="flex-1 px-4 py-2 bg-brand-light text-brand-cream rounded-lg hover:bg-brand-medium disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   Aplicar a {selectedEmployees.length} empleado(s)
@@ -4012,7 +4149,7 @@ const RecordsSummaryContent = () => {
             >
               {loading ? 'Cargando...' : 'Ver Resumen Individual'}
             </button>
-            <button
+            {/* <button
               onClick={generateComplianceReport}
               disabled={generatingReport}
               className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
@@ -4027,7 +4164,7 @@ const RecordsSummaryContent = () => {
                   📋 Generar Informe de Cumplimiento
                 </>
               )}
-            </button>
+            </button> */}
           </div>
         </div>
 
@@ -4336,6 +4473,9 @@ const WeeklySchedulesContent = () => {
   const [loading, setLoading] = useState(false);
   const [vacations, setVacations] = useState([]);
   const [showTemplatesModal, setShowTemplatesModal] = useState(false);
+  const [showCopyScheduleModal, setShowCopyScheduleModal] = useState(false);
+  const [scheduleToCopy, setScheduleToCopy] = useState(null);
+  const [selectedEmployeesToCopy, setSelectedEmployeesToCopy] = useState([]);
 
   React.useEffect(() => {
     fetchEmployees();
@@ -4686,12 +4826,25 @@ const WeeklySchedulesContent = () => {
                             )}
                           </td>
                           <td className="px-4 py-3">
-                            <button
-                              onClick={() => handleDeleteWeeklySchedule(schedule.id)}
-                              className="text-red-600 hover:text-red-800"
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </button>
+                            <div className="flex gap-2">
+                              <button
+                                onClick={() => {
+                                  setScheduleToCopy(schedule);
+                                  setShowCopyScheduleModal(true);
+                                }}
+                                className="text-blue-600 hover:text-blue-800"
+                                title="Copiar a otros empleados"
+                              >
+                                <Copy className="h-4 w-4" />
+                              </button>
+                              <button
+                                onClick={() => handleDeleteWeeklySchedule(schedule.id)}
+                                className="text-red-600 hover:text-red-800"
+                                title="Eliminar"
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       );
@@ -5157,6 +5310,553 @@ const WeeklySchedulesContent = () => {
             fetchTemplates(); // Refresh templates after closing modal
           }} 
         />
+      )}
+
+      {/* Modal para copiar horario a otros empleados */}
+      {showCopyScheduleModal && scheduleToCopy && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+            <div className="p-6">
+              <div className="flex justify-between items-center mb-6">
+                <h3 className="text-xl font-bold text-neutral-dark">
+                  📋 Copiar Horario Semanal a Otros Empleados
+                </h3>
+                <button
+                  onClick={() => {
+                    setShowCopyScheduleModal(false);
+                    setScheduleToCopy(null);
+                    setSelectedEmployeesToCopy([]);
+                  }}
+                  className="text-neutral-medium hover:text-neutral-dark"
+                >
+                  <X className="h-6 w-6" />
+                </button>
+              </div>
+
+              {/* Info del horario a copiar */}
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
+                <h4 className="font-semibold text-blue-900 mb-2">Horario a copiar:</h4>
+                <div className="text-sm text-blue-800">
+                  <p><strong>Semana:</strong> {scheduleToCopy.weekNumber} / {scheduleToCopy.year}</p>
+                  <p><strong>Fechas:</strong> {new Date(scheduleToCopy.startDate || scheduleToCopy.weekStart).toLocaleDateString('es-ES')} - {new Date(scheduleToCopy.endDate || scheduleToCopy.weekEnd).toLocaleDateString('es-ES')}</p>
+                  <p><strong>Plantilla:</strong> {templates.find(t => t.id === scheduleToCopy.templateId)?.name || 'Personalizado'}</p>
+                </div>
+              </div>
+
+              {/* Selector de empleados */}
+              <div className="mb-6">
+                <label className="block text-sm font-medium text-neutral-dark mb-3">
+                  Selecciona los empleados a los que copiar este horario:
+                </label>
+                <div className="max-h-64 overflow-y-auto border border-neutral-mid/20 rounded-lg">
+                  {employees
+                    .filter(emp => emp.id !== selectedEmployee?.id)
+                    .map(employee => (
+                      <label
+                        key={employee.id}
+                        className="flex items-center p-3 hover:bg-neutral-light cursor-pointer border-b border-neutral-mid/10 last:border-b-0"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={selectedEmployeesToCopy.includes(employee.id)}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              setSelectedEmployeesToCopy([...selectedEmployeesToCopy, employee.id]);
+                            } else {
+                              setSelectedEmployeesToCopy(selectedEmployeesToCopy.filter(id => id !== employee.id));
+                            }
+                          }}
+                          className="mr-3 h-4 w-4"
+                        />
+                        <div>
+                          <div className="font-medium text-neutral-dark">{employee.name}</div>
+                          <div className="text-xs text-neutral-medium">{employee.employeeCode}</div>
+                        </div>
+                      </label>
+                    ))
+                  }
+                </div>
+                <div className="mt-2 text-sm text-neutral-medium">
+                  {selectedEmployeesToCopy.length} empleado(s) seleccionado(s)
+                </div>
+              </div>
+
+              {/* Botones */}
+              <div className="flex justify-end gap-3">
+                <button
+                  onClick={() => {
+                    setShowCopyScheduleModal(false);
+                    setScheduleToCopy(null);
+                    setSelectedEmployeesToCopy([]);
+                  }}
+                  className="px-4 py-2 border border-neutral-mid/20 text-neutral-dark rounded-lg hover:bg-neutral-light"
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={async () => {
+                    if (selectedEmployeesToCopy.length === 0) {
+                      alert('Selecciona al menos un empleado');
+                      return;
+                    }
+
+                    setLoading(true);
+                    try {
+                      let successCount = 0;
+                      let errorCount = 0;
+
+                      for (const employeeId of selectedEmployeesToCopy) {
+                        try {
+                          const response = await fetch(`${getApiUrl()}/weekly-schedules`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                              employeeId: employeeId,
+                              templateId: scheduleToCopy.templateId,
+                              weekStart: scheduleToCopy.startDate || scheduleToCopy.weekStart,
+                              weekEnd: scheduleToCopy.endDate || scheduleToCopy.weekEnd,
+                              year: scheduleToCopy.year,
+                              weekNumber: scheduleToCopy.weekNumber,
+                              createdBy: selectedEmployee.id
+                            })
+                          });
+
+                          if (response.ok) {
+                            successCount++;
+                          } else {
+                            errorCount++;
+                          }
+                        } catch (error) {
+                          errorCount++;
+                        }
+                        
+                        // Small delay to avoid rate limiting
+                        await new Promise(resolve => setTimeout(resolve, 100));
+                      }
+
+                      alert(`Horarios copiados:\n✅ Exitosos: ${successCount}\n❌ Errores: ${errorCount}`);
+                      setShowCopyScheduleModal(false);
+                      setScheduleToCopy(null);
+                      setSelectedEmployeesToCopy([]);
+                    } catch (error) {
+                      console.error('Error:', error);
+                      alert('Error al copiar horarios: ' + error.message);
+                    } finally {
+                      setLoading(false);
+                    }
+                  }}
+                  disabled={loading || selectedEmployeesToCopy.length === 0}
+                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                >
+                  {loading ? 'Copiando...' : `Copiar a ${selectedEmployeesToCopy.length} empleado(s)`}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// AI Knowledge Management Component
+const AIKnowledgeContent = () => {
+  const [knowledgeStats, setKnowledgeStats] = useState(null);
+  const [documents, setDocuments] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [selectedFile, setSelectedFile] = useState(null);
+  const [uploadStatus, setUploadStatus] = useState('');
+  const [customInstructions, setCustomInstructions] = useState('');
+  const [editingInstructions, setEditingInstructions] = useState(false);
+  const [viewingDocument, setViewingDocument] = useState(null);
+
+  useEffect(() => {
+    fetchKnowledgeStats();
+    loadCustomInstructions();
+  }, []);
+
+  const fetchKnowledgeStats = async () => {
+    try {
+      const response = await fetch(`${getApiUrl()}/ai/knowledge-stats`);
+      const data = await response.json();
+      setKnowledgeStats(data);
+      setDocuments(data.sources || []);
+    } catch (error) {
+      console.error('Error fetching knowledge stats:', error);
+    }
+  };
+
+  const loadCustomInstructions = async () => {
+    try {
+      const response = await fetch(`${getApiUrl()}/ai/custom-instructions`);
+      if (response.ok) {
+        const data = await response.json();
+        setCustomInstructions(data.instructions || '');
+      }
+    } catch (error) {
+      console.error('Error loading custom instructions:', error);
+    }
+  };
+
+  const handleFileUpload = async (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    if (!file.name.endsWith('.txt')) {
+      alert('Solo se permiten archivos .txt');
+      return;
+    }
+
+    setSelectedFile(file);
+    setUploadStatus('');
+  };
+
+  const uploadDocument = async () => {
+    if (!selectedFile) return;
+
+    setLoading(true);
+    setUploadStatus('Subiendo...');
+
+    try {
+      const formData = new FormData();
+      formData.append('document', selectedFile);
+
+      const response = await fetch(`${getApiUrl()}/ai/upload-document`, {
+        method: 'POST',
+        body: formData
+      });
+
+      if (response.ok) {
+        setUploadStatus('✅ Documento subido correctamente');
+        setSelectedFile(null);
+        await reloadKnowledge();
+      } else {
+        const error = await response.json();
+        setUploadStatus('❌ Error: ' + error.message);
+      }
+    } catch (error) {
+      console.error('Error uploading document:', error);
+      setUploadStatus('❌ Error al subir el documento');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const reloadKnowledge = async () => {
+    setLoading(true);
+    try {
+      const response = await fetch(`${getApiUrl()}/ai/reload-knowledge`, {
+        method: 'POST'
+      });
+
+      if (response.ok) {
+        alert('✅ Base de conocimiento recargada correctamente');
+        await fetchKnowledgeStats();
+      } else {
+        alert('❌ Error al recargar la base de conocimiento');
+      }
+    } catch (error) {
+      console.error('Error reloading knowledge:', error);
+      alert('❌ Error al recargar la base de conocimiento');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const saveCustomInstructions = async () => {
+    setLoading(true);
+    try {
+      const response = await fetch(`${getApiUrl()}/ai/custom-instructions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ instructions: customInstructions })
+      });
+
+      if (response.ok) {
+        alert('✅ Instrucciones guardadas correctamente');
+        setEditingInstructions(false);
+        await reloadKnowledge();
+      } else {
+        alert('❌ Error al guardar las instrucciones');
+      }
+    } catch (error) {
+      console.error('Error saving instructions:', error);
+      alert('❌ Error al guardar las instrucciones');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const viewDocument = async (documentName) => {
+    try {
+      const response = await fetch(`${getApiUrl()}/ai/view-document/${documentName}`);
+      if (response.ok) {
+        const data = await response.json();
+        setViewingDocument({ name: documentName, content: data.content });
+      } else {
+        alert('❌ Error al cargar el documento');
+      }
+    } catch (error) {
+      console.error('Error viewing document:', error);
+      alert('❌ Error al cargar el documento');
+    }
+  };
+
+  const deleteDocument = async (documentName) => {
+    if (!confirm(`¿Estás seguro de que quieres eliminar "${documentName}"? Esta acción no se puede deshacer.`)) {
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const response = await fetch(`${getApiUrl()}/ai/delete-document/${documentName}`, {
+        method: 'DELETE'
+      });
+
+      if (response.ok) {
+        alert('✅ Documento eliminado correctamente');
+        await fetchKnowledgeStats();
+        await reloadKnowledge();
+      } else {
+        const error = await response.json();
+        alert('❌ Error al eliminar: ' + error.message);
+      }
+    } catch (error) {
+      console.error('Error deleting document:', error);
+      alert('❌ Error al eliminar el documento');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h2 className="text-2xl font-bold text-neutral-dark font-serif mb-2">
+          🧠 Gestión de Conocimiento de IA
+        </h2>
+        <p className="text-neutral-medium">
+          Administra los documentos y las instrucciones que la IA usa para responder preguntas
+        </p>
+      </div>
+
+      {/* Stats Card */}
+      <div className="bg-white rounded-lg shadow-sm p-6 border border-neutral-mid/20">
+        <h3 className="text-lg font-semibold text-neutral-dark mb-4">📊 Estadísticas</h3>
+        {knowledgeStats ? (
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="bg-blue-50 rounded-lg p-4">
+              <p className="text-sm text-blue-600 font-medium">Estado</p>
+              <p className="text-2xl font-bold text-blue-900">
+                {knowledgeStats.initialized ? '✅ Activo' : '❌ Inactivo'}
+              </p>
+            </div>
+            <div className="bg-green-50 rounded-lg p-4">
+              <p className="text-sm text-green-600 font-medium">Documentos Cargados</p>
+              <p className="text-2xl font-bold text-green-900">
+                {knowledgeStats.documentsCount || 0}
+              </p>
+            </div>
+            <div className="bg-purple-50 rounded-lg p-4">
+              <p className="text-sm text-purple-600 font-medium">Archivos Fuente</p>
+              <p className="text-2xl font-bold text-purple-900">
+                {knowledgeStats.sources?.length || 0}
+              </p>
+            </div>
+          </div>
+        ) : (
+          <p className="text-neutral-medium">Cargando estadísticas...</p>
+        )}
+      </div>
+
+      {/* Upload Document */}
+      <div className="bg-white rounded-lg shadow-sm p-6 border border-neutral-mid/20">
+        <h3 className="text-lg font-semibold text-neutral-dark mb-4">📤 Subir Documento</h3>
+        <p className="text-sm text-neutral-medium mb-4">
+          Sube archivos .txt con información que quieres que la IA conozca (políticas, procedimientos, FAQs, etc.)
+        </p>
+        
+        <div className="space-y-4">
+          <div className="flex items-center gap-4">
+            <label className="flex-1">
+              <div className="flex items-center justify-center w-full h-32 px-4 transition bg-white border-2 border-dashed border-neutral-mid/30 rounded-lg hover:border-brand-light cursor-pointer">
+                <div className="space-y-1 text-center">
+                  <Upload className="mx-auto h-12 w-12 text-neutral-medium" />
+                  <div className="text-sm text-neutral-medium">
+                    <span className="font-medium text-brand-light">Haz clic para subir</span> o arrastra un archivo
+                  </div>
+                  <p className="text-xs text-neutral-medium">Solo archivos .txt</p>
+                </div>
+              </div>
+              <input
+                type="file"
+                accept=".txt"
+                onChange={handleFileUpload}
+                className="hidden"
+              />
+            </label>
+          </div>
+
+          {selectedFile && (
+            <div className="flex items-center justify-between bg-blue-50 p-4 rounded-lg">
+              <div className="flex items-center gap-2">
+                <FileText className="h-5 w-5 text-blue-600" />
+                <span className="text-sm font-medium text-blue-900">{selectedFile.name}</span>
+                <span className="text-xs text-blue-600">
+                  ({(selectedFile.size / 1024).toFixed(2)} KB)
+                </span>
+              </div>
+              <button
+                onClick={uploadDocument}
+                disabled={loading}
+                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 flex items-center gap-2"
+              >
+                <Upload className="h-4 w-4" />
+                {loading ? 'Subiendo...' : 'Subir'}
+              </button>
+            </div>
+          )}
+
+          {uploadStatus && (
+            <div className={`p-3 rounded-lg ${uploadStatus.includes('✅') ? 'bg-green-50 text-green-900' : 'bg-red-50 text-red-900'}`}>
+              {uploadStatus}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Custom Instructions */}
+      <div className="bg-white rounded-lg shadow-sm p-6 border border-neutral-mid/20">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-semibold text-neutral-dark">📝 Instrucciones Personalizadas para la IA</h3>
+          {!editingInstructions ? (
+            <button
+              onClick={() => setEditingInstructions(true)}
+              className="flex items-center gap-2 px-3 py-2 text-sm bg-brand-light text-white rounded-lg hover:bg-brand-medium"
+            >
+              <Edit className="h-4 w-4" />
+              Editar
+            </button>
+          ) : (
+            <div className="flex gap-2">
+              <button
+                onClick={() => setEditingInstructions(false)}
+                className="flex items-center gap-2 px-3 py-2 text-sm bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300"
+              >
+                <X className="h-4 w-4" />
+                Cancelar
+              </button>
+              <button
+                onClick={saveCustomInstructions}
+                disabled={loading}
+                className="flex items-center gap-2 px-3 py-2 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50"
+              >
+                <Save className="h-4 w-4" />
+                {loading ? 'Guardando...' : 'Guardar'}
+              </button>
+            </div>
+          )}
+        </div>
+        
+        <p className="text-sm text-neutral-medium mb-4">
+          Añade instrucciones específicas sobre cómo debe comportarse la IA, qué información priorizar, o reglas especiales.
+        </p>
+
+        {editingInstructions ? (
+          <textarea
+            value={customInstructions}
+            onChange={(e) => setCustomInstructions(e.target.value)}
+            placeholder="Ejemplo:&#10;- Siempre menciona que las vacaciones deben solicitarse con 15 días de anticipación&#10;- Cuando hables de horarios, recuerda que la tolerancia es de 10 minutos&#10;- Para aprobar vacaciones, ve a Vacaciones → Botón Aprobar"
+            className="w-full h-64 p-4 border border-neutral-mid/30 rounded-lg focus:ring-2 focus:ring-brand-light focus:border-transparent font-mono text-sm"
+          />
+        ) : (
+          <div className="bg-gray-50 p-4 rounded-lg">
+            {customInstructions ? (
+              <pre className="whitespace-pre-wrap font-mono text-sm text-neutral-dark">
+                {customInstructions}
+              </pre>
+            ) : (
+              <p className="text-neutral-medium italic">No hay instrucciones personalizadas configuradas</p>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Documents List */}
+      <div className="bg-white rounded-lg shadow-sm p-6 border border-neutral-mid/20">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-semibold text-neutral-dark">📚 Documentos Cargados</h3>
+          <button
+            onClick={reloadKnowledge}
+            disabled={loading}
+            className="flex items-center gap-2 px-3 py-2 text-sm bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50"
+          >
+            <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+            {loading ? 'Recargando...' : 'Recargar Base de Conocimiento'}
+          </button>
+        </div>
+
+        {documents.length > 0 ? (
+          <div className="space-y-2">
+            {documents.map((doc, index) => (
+              <div
+                key={index}
+                className="flex items-center justify-between p-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors"
+              >
+                <div className="flex items-center gap-3">
+                  <FileText className="h-5 w-5 text-blue-600" />
+                  <span className="font-medium text-neutral-dark">{doc}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => viewDocument(doc)}
+                    className="flex items-center gap-2 px-3 py-1 text-sm text-blue-600 hover:bg-blue-50 rounded-lg"
+                  >
+                    <Eye className="h-4 w-4" />
+                    Ver
+                  </button>
+                  <button
+                    onClick={() => deleteDocument(doc)}
+                    className="flex items-center gap-2 px-3 py-1 text-sm text-red-600 hover:bg-red-50 rounded-lg"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                    Eliminar
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-neutral-medium text-center py-8">
+            No hay documentos cargados. Sube tu primer documento arriba.
+          </p>
+        )}
+      </div>
+
+      {/* Document Viewer Modal */}
+      {viewingDocument && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl max-w-4xl w-full max-h-[80vh] flex flex-col">
+            <div className="flex items-center justify-between p-6 border-b border-neutral-mid/20">
+              <h3 className="text-lg font-semibold text-neutral-dark">
+                📄 {viewingDocument.name}
+              </h3>
+              <button
+                onClick={() => setViewingDocument(null)}
+                className="text-neutral-medium hover:text-neutral-dark"
+              >
+                <X className="h-6 w-6" />
+              </button>
+            </div>
+            <div className="p-6 overflow-y-auto flex-1">
+              <pre className="whitespace-pre-wrap font-mono text-sm text-neutral-dark bg-gray-50 p-4 rounded-lg">
+                {viewingDocument.content}
+              </pre>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
