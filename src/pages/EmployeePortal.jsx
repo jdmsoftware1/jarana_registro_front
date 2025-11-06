@@ -18,11 +18,29 @@ import {
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
+
+// Helper para obtener API URL
+const getApiUrl = () => {
+  const baseUrl = import.meta.env.VITE_API_URL || 'http://localhost:3000';
+  return `${baseUrl}/api`;
+};
+
+// Helper para fetch autenticado con token de empleado
+const authenticatedFetch = async (url, options = {}) => {
+  const token = localStorage.getItem('employeeToken');
+  const headers = {
+    ...options.headers,
+    'Authorization': token ? `Bearer ${token}` : '',
+  };
+  
+  return fetch(url, {
+    ...options,
+    headers
+  });
+};
 import Footer from '../components/Footer';
 import AIChat from '../components/AIChat';
 import LoadingSpinner from '../components/LoadingSpinner';
-
-const getApiUrl = () => import.meta.env.VITE_API_URL || 'http://localhost:3000/api';
 
 const EmployeePortal = () => {
   const navigate = useNavigate();
@@ -42,7 +60,7 @@ const EmployeePortal = () => {
 
     try {
       console.log('Authenticating employee:', employeeCode.toUpperCase());
-      const response = await fetch(`${getApiUrl()}/kiosk/auth`, {
+      const response = await fetch(`${getApiUrl()}/auth/login/totp`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
@@ -56,6 +74,11 @@ const EmployeePortal = () => {
 
       if (!response.ok) {
         throw new Error(data.error || 'Error de autenticación');
+      }
+
+      // Guardar token para futuras peticiones
+      if (data.token) {
+        localStorage.setItem('employeeToken', data.token);
       }
 
       setEmployee(data.employee);

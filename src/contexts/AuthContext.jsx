@@ -14,7 +14,7 @@ export const useAuth = () => {
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [token, setToken] = useState(sessionStorage.getItem('token'));
+  const [token, setToken] = useState(localStorage.getItem('token'));
 
   useEffect(() => {
     const initAuth = async () => {
@@ -42,10 +42,10 @@ export const AuthProvider = ({ children }) => {
         response = await api.login(employeeCode, pin);
       }
       
-      const { token: newToken, employee } = response;
+      const { accessToken, employee } = response;
       
-      sessionStorage.setItem('token', newToken);
-      setToken(newToken);
+      localStorage.setItem('token', accessToken);
+      setToken(accessToken);
       setUser(employee);
       
       return { success: true, employee };
@@ -55,8 +55,23 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
+  const loginWithGoogle = () => {
+    // Redirigir a la ruta de Google OAuth del backend
+    window.location.href = `${import.meta.env.VITE_API_URL || 'http://localhost:3000'}/auth/google`;
+  };
+
+  const handleGoogleCallback = (accessToken, refreshToken) => {
+    localStorage.setItem('token', accessToken);
+    if (refreshToken) {
+      localStorage.setItem('refreshToken', refreshToken);
+    }
+    setToken(accessToken);
+    // El user se cargará automáticamente por el useEffect
+  };
+
   const logout = () => {
-    sessionStorage.removeItem('token');
+    localStorage.removeItem('token');
+    localStorage.removeItem('refreshToken');
     setToken(null);
     setUser(null);
   };
@@ -74,6 +89,8 @@ export const AuthProvider = ({ children }) => {
     token,
     loading,
     login,
+    loginWithGoogle,
+    handleGoogleCallback,
     logout,
     isAdmin,
     isAuthenticated,

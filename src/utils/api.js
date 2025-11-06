@@ -1,4 +1,4 @@
-const API_BASE_URL = '/api';
+const API_BASE_URL = `${import.meta.env.VITE_API_URL || 'http://localhost:3000'}/api`;
 
 class ApiError extends Error {
   constructor(message, status, data) {
@@ -10,7 +10,7 @@ class ApiError extends Error {
 }
 
 const getAuthHeaders = () => {
-  const token = sessionStorage.getItem('token');
+  const token = localStorage.getItem('token');
   return token ? { Authorization: `Bearer ${token}` } : {};
 };
 

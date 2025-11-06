@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Navigate } from 'react-router-dom';
-import { useUser, useClerk } from '@clerk/clerk-react';
+import { Navigate, useNavigate } from 'react-router-dom';
+import { useAuth } from '../contexts/AuthContext';
 import { useSystem } from '../contexts/SystemContext';
 import { 
   Users, 
@@ -22,7 +22,24 @@ import Footer from '../components/Footer';
 import AIChat from '../components/AIChat';
 
 // Helper function for API URL
-const getApiUrl = () => import.meta.env.VITE_API_URL || 'http://localhost:3000/api';
+const getApiUrl = () => {
+  const baseUrl = import.meta.env.VITE_API_URL || 'http://localhost:3000';
+  return `${baseUrl}/api`;
+};
+
+// Helper function for authenticated fetch
+const authenticatedFetch = async (url, options = {}) => {
+  const token = localStorage.getItem('token');
+  const headers = {
+    ...options.headers,
+    'Authorization': token ? `Bearer ${token}` : '',
+  };
+  
+  return fetch(url, {
+    ...options,
+    headers
+  });
+};
 
 // Helper function to calculate time ago
 const getTimeAgo = (timestamp) => {
@@ -41,15 +58,15 @@ const getTimeAgo = (timestamp) => {
 };
 
 const AdminDashboard = () => {
-  const { user, isLoaded, isSignedIn } = useUser();
-  const { signOut } = useClerk();
+  const { user, loading, logout } = useAuth();
+  const navigate = useNavigate();
   const { deactivateSystem, getSessionDuration } = useSystem();
   const [activeTab, setActiveTab] = useState('dashboard');
   
   const sessionDuration = getSessionDuration();
 
   // Doble verificación de seguridad
-  if (!isLoaded) {
+  if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-neutral-light">
         <LoadingSpinner />
@@ -57,8 +74,13 @@ const AdminDashboard = () => {
     );
   }
 
-  if (!isSignedIn) {
+  if (!user) {
     return <Navigate to="/admin-login" replace />;
+  }
+
+  // Verificar que sea admin
+  if (user.role !== 'admin') {
+    return <Navigate to="/" replace />;
   }
 
   const tabs = [
@@ -72,13 +94,17 @@ const AdminDashboard = () => {
     { id: 'settings', label: 'Configuración', icon: Settings }
   ];
 
-  const handleLogout = () => {
-    signOut();
+  const handleBackToHome = () => {
+    navigate('/');
   };
 
   const handleDeactivateSystem = () => {
-    if (confirm('¿Estás seguro de que quieres desactivar el sistema? Los empleados no podrán fichar hasta que se reactive.')) {
+    if (confirm('¿Estás seguro de que quieres desactivar el sistema? Esto cerrará tu sesión y los empleados no podrán fichar hasta que se reactive.')) {
       deactivateSystem();
+      // Cerrar sesión y redirigir
+      logout();
+      navigate('/', { replace: true });
+      window.location.reload(); // Forzar recarga completa
     }
   };
 
@@ -123,7 +149,7 @@ const AdminDashboard = () => {
                 Desactivar Sistema
               </button>
               <button
-                onClick={handleLogout}
+                onClick={handleBackToHome}
                 className="inline-flex items-center px-3 py-2 border border-transparent text-sm leading-4 font-medium rounded-md text-brand-medium hover:text-neutral-dark hover:bg-neutral-light focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-brand-light transition-colors"
               >
                 <LogOut className="h-4 w-4 mr-2" />
@@ -193,8 +219,8 @@ const DashboardContent = () => {
   const fetchDashboardData = async () => {
     try {
       const [employeesResponse, recordsResponse] = await Promise.all([
-        fetch(`${getApiUrl()}/employees`),
-        fetch(`${getApiUrl()}/records/all`)
+        authenticatedFetch(`${getApiUrl()}/employees`),
+        authenticatedFetch(`${getApiUrl()}/records/all`)
       ]);
 
       let totalEmployees = 0;
@@ -384,7 +410,7 @@ const EmployeesContent = () => {
   // Cargar empleados con sus últimos registros
   const fetchEmployees = async () => {
     try {
-      const response = await fetch(`${getApiUrl()}/employees`);
+      const response = await authenticatedFetch(`${getApiUrl()}/employees`);
       
       if (response.ok) {
         const employeesData = await response.json();
@@ -394,7 +420,7 @@ const EmployeesContent = () => {
         const employeesWithLastRecord = await Promise.all(
           employeesData.map(async (employee) => {
             try {
-              const recordsResponse = await fetch(`${getApiUrl()}/records/employee/${employee.id}?limit=1`);
+              const recordsResponse = await authenticatedFetch(`${getApiUrl()}/records/employee/${employee.id}?limit=1`);
               if (recordsResponse.ok) {
                 const records = await recordsResponse.json();
                 const lastRecord = records.length > 0 ? records[0] : null;
@@ -468,7 +494,7 @@ const EmployeesContent = () => {
           }}
           onRegenerate={async () => {
             try {
-              const response = await fetch(`${getApiUrl()}/employees/${selectedEmployee.id}/regenerate-totp`, {
+              const response = await authenticatedFetch(`${getApiUrl()}/employees/${selectedEmployee.id}/regenerate-totp`, {
                 method: 'POST'
               });
               
@@ -606,7 +632,7 @@ const RecordsContent = () => {
   // Cargar registros
   const fetchRecords = async () => {
     try {
-      const response = await fetch(`${getApiUrl()}/records/all`);
+      const response = await authenticatedFetch(`${getApiUrl()}/records/all`);
       
       if (response.ok) {
         const data = await response.json();
@@ -730,7 +756,7 @@ const SchedulesContent = () => {
   // Cargar empleados
   const fetchEmployees = async () => {
     try {
-      const response = await fetch(`${getApiUrl()}/employees`);
+      const response = await authenticatedFetch(`${getApiUrl()}/employees`);
       
       if (response.ok) {
         const data = await response.json();
@@ -825,8 +851,8 @@ const VacationsContent = () => {
   const fetchData = async () => {
     try {
       const [vacationsResponse, employeesResponse] = await Promise.all([
-        fetch(`${getApiUrl()}/vacations`),
-        fetch(`${getApiUrl()}/employees`)
+        authenticatedFetch(`${getApiUrl()}/vacations`),
+        authenticatedFetch(`${getApiUrl()}/employees`)
       ]);
       
       if (vacationsResponse.ok) {
@@ -880,7 +906,7 @@ const VacationsContent = () => {
 
   const handleStatusChange = async (vacationId, newStatus) => {
     try {
-      const response = await fetch(`${getApiUrl()}/vacations/${vacationId}/status`, {
+      const response = await authenticatedFetch(`${getApiUrl()}/vacations/${vacationId}/status`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json'
@@ -1041,7 +1067,7 @@ const WeeklyViewContent = () => {
   // Fetch employees and their schedules
   const fetchData = async () => {
     try {
-      const employeesResponse = await fetch(`${getApiUrl()}/employees`);
+      const employeesResponse = await authenticatedFetch(`${getApiUrl()}/employees`);
       
       if (employeesResponse.ok) {
         const employeesData = await employeesResponse.json();
@@ -1051,7 +1077,7 @@ const WeeklyViewContent = () => {
         const schedulesData = {};
         for (const employee of employeesData) {
           try {
-            const scheduleResponse = await fetch(`${getApiUrl()}/schedules/employee/${employee.id}`);
+            const scheduleResponse = await authenticatedFetch(`${getApiUrl()}/schedules/employee/${employee.id}`);
             if (scheduleResponse.ok) {
               const employeeSchedules = await scheduleResponse.json();
               schedulesData[employee.id] = employeeSchedules.reduce((acc, schedule) => {
@@ -1229,8 +1255,8 @@ const AIInsightsContent = () => {
     setLoading(true);
     try {
       const [analysisResponse, alertsResponse] = await Promise.all([
-        fetch(`${getApiUrl()}/ai/anomalies-summary?days=${selectedPeriod}`),
-        fetch(`${getApiUrl()}/ai/smart-alerts`)
+        authenticatedFetch(`${getApiUrl()}/ai/anomalies-summary?days=${selectedPeriod}`),
+        authenticatedFetch(`${getApiUrl()}/ai/smart-alerts`)
       ]);
 
       if (analysisResponse.ok) {
@@ -1561,7 +1587,7 @@ const CreateEmployeeModal = ({ onClose, onSuccess }) => {
     setError('');
 
     try {
-      const response = await fetch(`${getApiUrl()}/employees`, {
+      const response = await authenticatedFetch(`${getApiUrl()}/employees`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -1727,7 +1753,7 @@ const ScheduleModal = ({ employee, onClose }) => {
   React.useEffect(() => {
     const loadSchedules = async () => {
       try {
-        const response = await fetch(`${getApiUrl()}/schedules/employee/${employee.id}`);
+        const response = await authenticatedFetch(`${getApiUrl()}/schedules/employee/${employee.id}`);
         
         if (response.ok) {
           const existingSchedules = await response.json();
@@ -1809,7 +1835,7 @@ const ScheduleModal = ({ employee, onClose }) => {
   const handleSave = async () => {
     setLoading(true);
     try {
-      const response = await fetch(`${getApiUrl()}/schedules/employee/${employee.id}`, {
+      const response = await authenticatedFetch(`${getApiUrl()}/schedules/employee/${employee.id}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -1961,7 +1987,7 @@ const CreateVacationModal = ({ employees, onClose, onSuccess }) => {
     setError('');
 
     try {
-      const response = await fetch(`${getApiUrl()}/vacations`, {
+      const response = await authenticatedFetch(`${getApiUrl()}/vacations`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'

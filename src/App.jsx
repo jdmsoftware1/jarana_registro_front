@@ -1,37 +1,19 @@
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
-import { SignedIn, SignedOut, useUser } from '@clerk/clerk-react';
+import { useAuth } from './contexts/AuthContext';
 import HomePage from './pages/HomePage';
 import AdminLoginPage from './pages/AdminLoginPage';
 import AdminDashboard from './pages/AdminDashboard';
 import EmployeeKioskPage from './pages/EmployeeKioskPage';
 import EmployeePortal from './pages/EmployeePortal';
+import AuthCallback from './pages/AuthCallback';
 import LoadingSpinner from './components/LoadingSpinner';
 
+// Componente para proteger rutas que requieren autenticación
 const ProtectedRoute = ({ children, adminOnly = false }) => {
-  const { user, isLoaded } = useUser();
+  const { user, loading } = useAuth();
 
-  if (!isLoaded) {
-    return <LoadingSpinner />;
-  }
-
-  // Verificar si el usuario tiene el rol requerido
-  if (adminOnly) {
-    const userRole = user?.publicMetadata?.role || user?.privateMetadata?.role;
-    if (userRole !== 'admin') {
-      return <Navigate to="/" replace />;
-    }
-  }
-
-  return children;
-};
-
-// Componente específico para proteger el dashboard de admin
-const ProtectedAdminRoute = ({ children }) => {
-  const { user, isLoaded, isSignedIn } = useUser();
-
-  // Mientras carga Clerk, mostrar spinner
-  if (!isLoaded) {
+  if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-neutral-light">
         <LoadingSpinner />
@@ -39,12 +21,15 @@ const ProtectedAdminRoute = ({ children }) => {
     );
   }
 
-  // Si no está logueado, redirigir al login
-  if (!isSignedIn) {
+  if (!user) {
     return <Navigate to="/admin-login" replace />;
   }
 
-  // Si está logueado, mostrar el dashboard
+  // Verificar si el usuario tiene el rol requerido
+  if (adminOnly && user.role !== 'admin') {
+    return <Navigate to="/" replace />;
+  }
+
   return children;
 };
 
@@ -54,19 +39,21 @@ const AppRoutes = () => {
       {/* Public Routes */}
       <Route path="/" element={<HomePage />} />
       <Route path="/admin-login" element={<AdminLoginPage />} />
-      <Route path="/employee-kiosk" element={<EmployeeKioskPage />} />
-      <Route path="/employee-portal" element={<EmployeePortal />} />
+      <Route path="/auth/callback" element={<AuthCallback />} />
       
-      {/* Admin Routes - Protected by Clerk */}
-      
+      {/* Protected Routes - Requiere login con Google */}
       <Route 
         path="/admin-dashboard" 
         element={
-          <ProtectedAdminRoute>
+          <ProtectedRoute adminOnly={true}>
             <AdminDashboard />
-          </ProtectedAdminRoute>
+          </ProtectedRoute>
         } 
       />
+      
+      {/* Public Routes - No requieren autenticación */}
+      <Route path="/employee-kiosk" element={<EmployeeKioskPage />} />
+      <Route path="/employee-portal" element={<EmployeePortal />} />
       
       {/* 404 */}
       <Route 

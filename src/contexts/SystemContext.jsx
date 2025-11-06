@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { useUser } from '@clerk/clerk-react';
+import { useAuth } from './AuthContext';
 
 const SystemContext = createContext();
 
@@ -12,7 +12,7 @@ export const useSystem = () => {
 };
 
 export const SystemProvider = ({ children }) => {
-  const { user, isLoaded } = useUser();
+  const { user, loading } = useAuth();
   const [systemActive, setSystemActive] = useState(false);
   const [supervisor, setSupervisor] = useState(null);
   const [sessionStartTime, setSessionStartTime] = useState(null);
@@ -42,18 +42,16 @@ export const SystemProvider = ({ children }) => {
 
   // Activar sistema cuando el supervisor se loguea
   useEffect(() => {
-    if (isLoaded && user) {
-      const userRole = user?.publicMetadata?.role || user?.privateMetadata?.role || 'admin';
-      
+    if (!loading && user) {
       // Activar sistema para cualquier usuario logueado (asumimos que es supervisor)
       activateSystem({
         id: user.id,
-        name: `${user.firstName} ${user.lastName}`,
-        email: user.primaryEmailAddress?.emailAddress,
-        role: userRole
+        name: user.name,
+        email: user.email,
+        role: user.role || 'admin'
       });
     }
-  }, [user, isLoaded]);
+  }, [user, loading]);
 
   const activateSystem = (supervisorData) => {
     const sessionData = {
@@ -100,7 +98,7 @@ export const SystemProvider = ({ children }) => {
     activateSystem,
     deactivateSystem,
     getSessionDuration,
-    isLoaded
+    isLoaded: !loading
   };
 
   return (

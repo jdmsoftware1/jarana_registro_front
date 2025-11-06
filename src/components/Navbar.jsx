@@ -1,22 +1,22 @@
 import React from 'react';
-import { Link, useLocation } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Clock, Users, BarChart3, LogOut } from 'lucide-react';
-import { useUser, useClerk } from '@clerk/clerk-react';
+import { useAuth } from '../contexts/AuthContext';
 
 const Navbar = () => {
-  const { user } = useUser();
-  const { signOut } = useClerk();
+  const { user, logout } = useAuth();
+  const navigate = useNavigate();
   const location = useLocation();
 
   const isActive = (path) => location.pathname === path;
 
   const isAdmin = () => {
-    const userRole = user?.publicMetadata?.role || user?.privateMetadata?.role;
-    return userRole === 'admin';
+    return user?.role === 'admin';
   };
 
   const handleLogout = () => {
-    signOut();
+    logout();
+    navigate('/admin-login');
   };
 
   return (
@@ -81,8 +81,8 @@ const Navbar = () => {
           
           <div className="flex items-center space-x-4">
             <div className="text-sm text-brand-cream">
-              <span className="font-medium">{user?.firstName} {user?.lastName}</span>
-              <span className="text-brand-accent ml-2">({user?.publicMetadata?.employeeCode || user?.privateMetadata?.employeeCode})</span>
+              <span className="font-medium">{user?.name}</span>
+              <span className="text-brand-accent ml-2">({user?.employeeCode})</span>
             </div>
             
             <button
